@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="vi"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Codex · Token usage</title>
+<style>
+:root{color-scheme:dark;font:15px system-ui;background:#10141c;color:#e5ecf6}*{box-sizing:border-box}body{max-width:1400px;margin:auto;padding:34px 28px}header,.controls{display:flex;align-items:center;gap:16px;flex-wrap:wrap}header{justify-content:space-between}h1{font-size:28px;margin:0}p,.muted{color:#9caec5}input,select,textarea,button{font:inherit;color:inherit;background:#1a2331;border:1px solid #344258;border-radius:7px;padding:9px}button{cursor:pointer;background:#253e58}input[type=date]{max-width:180px}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin:26px 0}.card,section{background:#19212e;border:1px solid #2c394d;border-radius:12px;padding:20px}.card strong{display:block;font-size:28px;margin-top:8px}.card span{color:#9caec5}section{margin:18px 0}h2{font-size:18px;margin:0 0 15px}.scroll{overflow:auto}table{width:100%;border-collapse:collapse;text-align:left;white-space:nowrap}th,td{padding:12px 10px;border-bottom:1px solid #2c394d}th{font-size:12px;color:#9caec5}td:first-child{white-space:normal;min-width:230px;max-width:440px}canvas{width:100%;height:190px}textarea{width:100%;min-height:130px;font:13px monospace}summary{cursor:pointer}#status{color:#89d9bb}#priceStatus{color:#f7cb84}.notice{line-height:1.6;font-size:13px}label{display:inline-flex;align-items:center;gap:8px}.small{font-size:12px;color:#9caec5}
+</style>
+<header><div><h1>Codex usage</h1><p>Token ghi nhận · Chi phí ước tính · UTC+07:00</p></div><div id="status">Đang đọc log…</div></header>
+<div class="controls"><label>Ngày <input id="date" type="date"></label><label>Task <select id="task"><option value="">Tất cả task</option></select></label><button id="refresh">Cập nhật</button></div>
+<div class="cards"><div class="card"><span>Input đã xử lý</span><strong id="input">—</strong></div><div class="card"><span>Cached input</span><strong id="cached">—</strong></div><div class="card"><span>Output</span><strong id="output">—</strong></div><div class="card"><span>Request gần nhất · input</span><strong id="latest">—</strong></div><div class="card"><span>Chi phí ước tính · USD</span><strong id="cost">—</strong></div></div>
+<section><h2>Input mỗi response</h2><canvas id="chart"></canvas><div class="small">Trục ngang: thứ tự response trong ngày. Tổng input xử lý gồm lịch sử được gửi lại; không phải dung lượng context hiện tại.</div></section>
+<section><h2>Usage theo task</h2><div class="scroll"><table><thead><tr><th>Task</th><th>Responses</th><th>Input</th><th>Cache %</th><th>Output</th><th>Ước tính USD</th></tr></thead><tbody id="tasks"></tbody></table></div></section>
+<section><details><summary>Giá OpenAI chính thức × hệ số · USD / 1 triệu token</summary><p class="notice">Giá Standard, kiểm tra ngày 19/11/2026. <a href="https://developers.openai.com/api/docs/pricing" target="_blank" rel="noopener">Nguồn OpenAI</a>. Đơn giá trong JSON là giá gốc; hệ số áp dụng một lần cho tổng tiền. Model chưa có giá sẽ hiện “Chưa có giá”.</p><p><label>Hệ số <input id="factor" type="number" min="0" step="0.01" value="0.2" style="width:100px"></label> <span id="basis"></span></p><p class="notice">GPT-6.1 Sol: input $2, cached $0.10, output $10 / triệu token. Sau 0.2×: $0.40 / $0.02 / $2. Với input &gt;272K, áp dụng giá long context cho cả request: input/cache 2× và output 1.5×. Cache-write mặc định dùng giá lưu 30 phút; log không ghi thời hạn cache nên đây là giả định.</p><textarea id="rates" spellcheck="false"></textarea><p><button id="save">Lưu đơn giá</button> <button id="resetPrices">Dùng giá chính thức × 0.2</button> <span id="priceStatus"></span></p></details><div class="small" id="priceSummary"></div></section>
+<section><h2>Response gần đây</h2><div class="scroll"><table><thead><tr><th>Thời gian / model</th><th>Input</th><th>Cached</th><th>Output</th><th>Ước tính USD</th></tr></thead><tbody id="recent"></tbody></table></div></section>
+<p class="notice">Cập nhật mỗi 3 giây khi log có usage mới, không đo từng token đang stream. Chỉ đọc usage và tên task từ máy này. Số tiền chưa gồm phí tool hay khoản điều chỉnh của gateway; không phải hóa đơn. Reasoning đã nằm trong output, không cộng lần hai.</p>
+<script>
+const $=id=>document.getElementById(id), fmt=n=>new Intl.NumberFormat('en-US').format(n), money=n=>n===null?'Chưa có giá':'$'+n.toFixed(4);
+const officialRates = {
+ 'gpt-6.1-sol': {input:2,cached:0.1,output:10,write:2.5,long_threshold:272000,long_input:2,long_output:1.5},
+ 'gpt-5.6-sol': {input:4,cached:0.4,output:20,write:5,long_threshold:272000,long_input:2,long_output:1.5},
+ 'gpt-5.6-luna': {input:0.2,cached:0.02,output:1.2,write:0.25,long_threshold:272000,long_input:2,long_output:1.5},
+ 'gpt-5.6-terra': {input:2,cached:0.2,output:12,write:2.5,long_threshold:272000,long_input:2,long_output:1.5}
+};
+let data={rows:[],titles:{}},rates=structuredClone(officialRates),factor=0.2;
+try{const saved=JSON.parse(localStorage.getItem('codex-usage-pricing-v2')||'null');if(saved&&Number.isFinite(saved.factor)&&saved.factor>=0&&saved.rates){rates=saved.rates;factor=saved.factor}}catch{}
+$('rates').value=JSON.stringify(rates,null,2);$('factor').value=factor;
+function priceLabel(){ $('basis').textContent='Giá gốc × '+factor; $('priceSummary').textContent='Ước tính: giá Standard trong cấu hình × '+factor+' · Giá kiểm tra 19/11/2026 · Chưa gồm phí tool/gateway.'; }
+priceLabel();
+$('date').value=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Bangkok',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+function cost(r, multiplier=factor){const p=rates[r.model];if(!p)return null;const a=r.input_tokens-r.cached_input_tokens-r.cache_write_input_tokens;if(a<0)return null;for(const k of ['input','cached','output'])if(typeof p[k]!=='number'||!Number.isFinite(p[k])||p[k]<0)return null;if(r.cache_write_input_tokens&&!(typeof p.write==='number'&&Number.isFinite(p.write)&&p.write>=0))return null;const long=Number.isFinite(p.long_threshold)&&r.input_tokens>p.long_threshold;const im=long?(p.long_input||1):1,om=long?(p.long_output||1):1;return ((a*p.input+r.cached_input_tokens*p.cached+r.cache_write_input_tokens*(p.write||0))*im+r.output_tokens*p.output*om)/1e6*multiplier}
+function totalCost(rows){let sum=0;for(const r of rows){const c=cost(r);if(c===null)return null;sum+=c}return sum}
+function cell(tr,text){const td=document.createElement('td');td.textContent=text;tr.append(td)}
+function render(){const rows=data.rows.filter(r=>!$('task').value||r.thread===$('task').value);const sum=k=>rows.reduce((s,r)=>s+r[k],0);$('input').textContent=fmt(sum('input_tokens'));$('cached').textContent=fmt(sum('cached_input_tokens'));$('output').textContent=fmt(sum('output_tokens'));$('latest').textContent=fmt(rows.at(-1)?.input_tokens||0);$('cost').textContent=money(totalCost(rows));const groups=new Map();for(const r of rows){if(!groups.has(r.thread))groups.set(r.thread,[]);groups.get(r.thread).push(r)}$('tasks').replaceChildren();for(const [id,rs] of [...groups].sort((a,b)=>b[1].reduce((s,r)=>s+r.input_tokens,0)-a[1].reduce((s,r)=>s+r.input_tokens,0))){const tr=document.createElement('tr'),input=rs.reduce((s,r)=>s+r.input_tokens,0),cache=rs.reduce((s,r)=>s+r.cached_input_tokens,0);[data.titles[id]||id,fmt(rs.length),fmt(input),input?(100*cache/input).toFixed(1)+'%':'—',fmt(rs.reduce((s,r)=>s+r.output_tokens,0)),money(totalCost(rs))].forEach(v=>cell(tr,v));$('tasks').append(tr)}$('recent').replaceChildren();for(const r of rows.slice(-30).reverse()){const tr=document.createElement('tr');[new Date(r.timestamp).toLocaleTimeString('vi-VN',{timeZone:'Asia/Bangkok'})+' · '+r.model,fmt(r.input_tokens),fmt(r.cached_input_tokens),fmt(r.output_tokens),money(cost(r))].forEach(v=>cell(tr,v));$('recent').append(tr)}draw(rows)}
+function draw(rows){
+ const c=$('chart'),dpr=devicePixelRatio||1,w=c.clientWidth,h=190;
+ c.width=w*dpr;c.height=h*dpr;
+ const x=c.getContext('2d');x.scale(dpr,dpr);x.font='12px system-ui';
+ const peak=rows.reduce((max,r)=>Math.max(max,r.input_tokens),1);
+ const rawStep=peak/4,unit=10**Math.floor(Math.log10(rawStep));
+ const step=[1,2,2.5,5,10].find(n=>n*unit>=rawStep)*unit;
+ const ceiling=Math.ceil(peak/step)*step;
+ const left=Math.max(48,x.measureText(fmt(ceiling)).width+14),right=w-12,top=12,bottom=h-28;
+ const y=value=>bottom-value/ceiling*(bottom-top);
+ x.textAlign='right';x.textBaseline='middle';x.lineWidth=1;
+ for(let value=0;value<=ceiling+step/2;value+=step){
+  const py=y(value);
+  x.strokeStyle='#2c394d';x.beginPath();x.moveTo(left,py);x.lineTo(right,py);x.stroke();
+  x.strokeStyle='#65768d';x.beginPath();x.moveTo(left-4,py);x.lineTo(left,py);x.stroke();
+  x.fillStyle='#9caec5';x.fillText(fmt(value),left-9,py);
+ }
+ x.strokeStyle='#65768d';x.beginPath();x.moveTo(left,top);x.lineTo(left,bottom);x.lineTo(right,bottom);x.stroke();
+ if(!rows.length)return;
+ const px=i=>left+i*(right-left)/Math.max(1,rows.length-1);
+ const intervals=Math.min(rows.length-1,Math.max(1,Math.floor((right-left)/90)));
+ x.textBaseline='top';
+ for(let tick=0;tick<=intervals;tick++){
+  const i=intervals?Math.round(tick*(rows.length-1)/intervals):0,pos=px(i);
+  x.strokeStyle='#2c394d';x.beginPath();x.moveTo(pos,top);x.lineTo(pos,bottom);x.stroke();
+  x.strokeStyle='#65768d';x.beginPath();x.moveTo(pos,bottom);x.lineTo(pos,bottom+4);x.stroke();
+  x.textAlign=tick===0?'left':tick===intervals?'right':'center';
+  x.fillStyle='#9caec5';x.fillText(fmt(i+1),pos,bottom+8);
+ }
+ x.strokeStyle='#74dfc1';x.lineWidth=2;x.beginPath();
+ rows.forEach((r,i)=>{i?x.lineTo(px(i),y(r.input_tokens)):x.moveTo(px(i),y(r.input_tokens))});x.stroke();
+ if(rows.length===1){x.fillStyle='#74dfc1';x.beginPath();x.arc(left,y(rows[0].input_tokens),4,0,Math.PI*2);x.fill()}
+}
+let busy=false;async function refresh(){if(busy)return;busy=true;try{const res=await fetch('/api/usage?date='+$('date').value,{signal:AbortSignal.timeout(10000)});if(!res.ok)throw Error('HTTP '+res.status);data=await res.json();const selected=$('task').value;$('task').replaceChildren(new Option('Tất cả task',''));for(const [id,title] of Object.entries(data.titles))$('task').add(new Option(title,id));if([...$('task').options].some(o=>o.value===selected))$('task').value=selected;$('status').textContent=data.error?'Lỗi đọc log: '+data.error: data.ready?'● Đã cập nhật '+new Date(data.updated).toLocaleTimeString('vi-VN')+' · '+data.files+' log':'Đang lập chỉ mục…';render()}catch(e){$('status').textContent='Mất kết nối: '+e.message}finally{busy=false}}
+$('save').onclick=()=>{try{const p=JSON.parse($('rates').value);if(!p||Array.isArray(p)||typeof p!=='object')throw Error('Cần object JSON theo tên model');for(const [model,v] of Object.entries(p)){if(!v||typeof v!=='object')throw Error('Giá không hợp lệ: '+model);for(const k of ['input','cached','output'])if(typeof v[k]!=='number'||!Number.isFinite(v[k])||v[k]<0)throw Error('Thiếu/sai '+k+' cho '+model);if(v.write!==undefined&&(typeof v.write!=='number'||!Number.isFinite(v.write)||v.write<0))throw Error('Sai write cho '+model)}for(const [model,v] of Object.entries(p))for(const k of ['long_threshold','long_input','long_output'])if(v[k]!==undefined&&(!Number.isFinite(v[k])||v[k]<0))throw Error('Sai '+k+' cho '+model);const f=Number($('factor').value);if($('factor').value.trim()===''||!Number.isFinite(f)||f<0)throw Error('Hệ số phải là số không âm');localStorage.setItem('codex-usage-pricing-v2',JSON.stringify({rates:p,factor:f}));rates=p;factor=f;priceLabel();$('priceStatus').textContent='Đã lưu';render()}catch(e){$('priceStatus').textContent=e.message}};
+$('resetPrices').onclick=()=>{$('rates').value=JSON.stringify(officialRates,null,2);$('factor').value='0.2';$('save').click()};
+$('task').onchange=render;$('date').onchange=refresh;$('refresh').onclick=refresh;window.onresize=()=>render();refresh();setInterval(refresh,3000);
+</script></html>
