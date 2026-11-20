@@ -8,7 +8,7 @@ systemctl --user start codex-usage-dashboard.service
 if ! healthy; then
     systemctl --user restart codex-usage-dashboard.service
 fi
-for attempt in {1..60}; do
+for _attempt in {1..60}; do
     if healthy; then
         xdg-open "$url" >/dev/null 2>&1 &
         exit 0

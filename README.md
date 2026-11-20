@@ -7,17 +7,14 @@ Local dashboard for per-response Codex tokens, cached input, estimated cost, and
 Requires Git, Python 3.9+ with system timezone data, curl, xdg-open, and systemd user services. No Python packages required.
 
 ```sh
-git clone https://github.com/MustangNguyen/codexusage.git ~/.codex/tools/usage-dashboard
-cd ~/.codex/tools/usage-dashboard
-mkdir -p ~/.local/bin ~/.config/systemd/user
-install -m 755 codexusage ~/.local/bin/codexusage
-install -m 644 codex-usage-dashboard.service ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now codex-usage-dashboard.service
-~/.local/bin/codexusage
+git clone https://github.com/MustangNguyen/codexusage.git
+cd codexusage
+./install.sh
 ```
 
-If the destination folder already exists, back it up or use the existing checkout. Add `~/.local/bin` to PATH to run `codexusage` by name.
+Open a new terminal and run `codexusage`. To run immediately in the current terminal, use `~/.local/bin/codexusage`.
+
+The installer uses the checkout's current location, installs the launcher into `~/.local/bin`, configures and starts a systemd user service, and adds PATH setup to Bash/login profiles (and Zsh when detected). No sudo required. Keep the checkout in place; if you move it, rerun `./install.sh` from its new location. Rerunning also updates an existing installation without duplicating PATH entries. The `.service` file is a template rendered by the installer; do not copy it directly.
 
 Open http://127.0.0.1:8766 in a browser on this computer. For manual launch, run `python3 server.py --port 8766` from the checkout (stop an existing service first).
 

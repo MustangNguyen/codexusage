@@ -2,7 +2,7 @@
 Description=Local Codex usage dashboard
 
 [Service]
-ExecStart=/usr/bin/python3 %h/.codex/tools/usage-dashboard/server.py --port 8766
+ExecStart=@PYTHON@ @SERVER@ --port 8766
 Restart=on-failure
 RestartSec=3
 
