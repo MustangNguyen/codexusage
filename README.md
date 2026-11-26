@@ -1,6 +1,6 @@
 # Codex usage dashboard
 
-Local dashboard for per-response Codex tokens, cached input, estimated cost, and usage by task. The chart includes token gridlines and response ticks. UI language: Vietnamese.
+Local dashboard for per-response Codex tokens, cached input, estimated cost, and usage by task. The chart includes token gridlines, response ticks, and the same threshold colors as the task table, with dashed guides at 100K, 200K, and 272K when visible. UI language: Vietnamese. Task rows show the latest request input in the selected day, including cached input, with text labels and colors: green below 100K, yellow from 100K, orange from 200K, red from 272K tokens. These fixed thresholds are context-size indicators, not model context-window percentages or forecasts. Compaction can reduce the latest input; cumulative input does not measure current context.
 
 ## Install (Linux)
 
@@ -28,14 +28,14 @@ systemctl --user disable --now codex-usage-dashboard
 
 The server binds to loopback only, uses the Python standard library, and reads
 `~/.codex/sessions`, `~/.codex/archived_sessions`, and task titles from the
-read-only `state_5.sqlite` connection. The local API includes usage records and task titles; titles can contain prompt text. Keep the server on loopback. Generated `cache/` data is private and excluded from Git.
+read-only `state_5.sqlite` connection. Names prefer Codex's explicit `threads.name` over its prompt-derived `title`. When `~/.config/Kepler/app.db` is available, Codex thread IDs are matched to Kepler sessions and use the parent task's name (or the session label when no task is linked). Kepler is optional and both databases are opened read-only. Injected workspace guidance is excluded from title fallbacks. Rows remain grouped by Codex thread, so several sessions can share a Kepler task name. The local API includes usage records and task titles; titles can contain prompt text. Keep the server on loopback. Generated `cache/` data is private and excluded from Git.
 Usage is refreshed every three seconds after records are written, not per streamed token.
 The first index scan can take longer. Incremental scans retain incomplete lines for retry.
 Records are deduplicated by response ID. Totals use per-response usage, never cumulative
 turn/thread totals. Days use Asia/Bangkok. Logs without token_usage_record are not counted;
 missing records mean coverage may be incomplete, not zero usage.
 
-Default estimates use official OpenAI Standard rates verified on 2026-11-19, multiplied by 0.2. Bundled models: gpt-6.1-sol, gpt-5.6-sol, gpt-5.6-luna, gpt-5.6-terra. Sources: https://developers.openai.com/api/docs/models/ followed by each exact model name. These are a dated snapshot, not automatically refreshed. Rates and the multiplier can be edited and are stored together in browser localStorage (codex-usage-pricing-v2). Legacy custom prices are left untouched in the old key; copy them manually if needed. Enter rates in USD per million
+Default estimates use official OpenAI Standard rates verified on 2026-11-25, multiplied by 0.2. GPT-6 Luna (`gpt-6-luna`) uses OpenAI Standard rates. Other bundled models: gpt-6-astra, gpt-6.2-astra, gpt-6.1-sol, gpt-6.1-terra, gpt-5.6-sol, gpt-5.6-luna, gpt-5.6-terra. Sources: https://developers.openai.com/api/docs/models/ followed by each exact model name. The dashboard estimates gpt-6.2-sol using the configured gpt-6.1-sol rates. These are a dated snapshot, not automatically refreshed. Rates and the multiplier can be edited and are stored together in browser localStorage (codex-usage-pricing-v2). Legacy custom prices are left untouched in the old key; copy them manually if needed. Enter rates in USD per million
 tokens by exact model name in the gateway price section:
 
 ```json

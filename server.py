@@ -15,13 +15,15 @@ from urllib.parse import parse_qs, urlsplit
 from zoneinfo import ZoneInfo
 
 ROOT = Path.home() / '.codex'
+KEPLER_DB = Path.home() / '.config' / 'Kepler' / 'app.db'
 HERE = Path(__file__).resolve().parent
 ZONE = ZoneInfo('Asia/Bangkok')
 KEYS = ('input_tokens', 'cached_input_tokens', 'cache_write_input_tokens', 'output_tokens')
 
 class UsageIndex:
-    def __init__(self, root=ROOT):
+    def __init__(self, root=ROOT, kepler_db=KEPLER_DB):
         self.root = root
+        self.kepler_db = kepler_db
         self.files = {}
         self.records = {}
         self.titles = {}
@@ -75,15 +77,48 @@ class UsageIndex:
                     self.files[str(path)] = state
                 except FileNotFoundError:
                     continue
+        self.read_titles()
+        self.updated = datetime.now(ZONE).isoformat()
+        self.ready = True
+
+    def read_titles(self):
+        titles = {}
         db = self.root / 'state_5.sqlite'
         if db.exists():
             try:
                 with closing(sqlite3.connect(f'file:{db}?mode=ro', uri=True, timeout=1)) as conn:
-                    self.titles = {tid: (title[:140] + '…' if len(title) > 140 else title) for tid, title in conn.execute('select id,substr(title,1,141) from threads') if title}
+                    columns = {row[1] for row in conn.execute('pragma table_info(threads)')}
+                    name = 'name' if 'name' in columns else 'NULL'
+                    for tid, custom_name, title in conn.execute(f'select id,{name},title from threads'):
+                        label = (custom_name or '').strip() or (title or '').strip()
+                        if label and not label.startswith(('<workspace-guidance>', '<shared-context>', '# AGENTS.md')):
+                            titles[tid] = label
             except sqlite3.Error:
                 pass
-        self.updated = datetime.now(ZONE).isoformat()
-        self.ready = True
+        if self.kepler_db is not None and self.kepler_db.exists():
+            try:
+                with closing(sqlite3.connect(f'file:{self.kepler_db}?mode=ro', uri=True, timeout=1)) as conn:
+                    rows = conn.execute('''
+                        select s.resume_handle, s.platform_session_id, s.prior_platform_ids,
+                               t.name, s.custom_label, s.label
+                        from session_metadata s left join tasks t on t.id = s.task_id
+                        where s.adapter_id = 'codex'
+                    ''')
+                    for resume, platform, prior, task_name, custom_label, label in rows:
+                        label = next((v.strip() for v in (task_name, custom_label, label) if v and v.strip()), '')
+                        if not label:
+                            continue
+                        try:
+                            previous = json.loads(prior) if prior else []
+                        except (ValueError, TypeError):
+                            previous = []
+                        ids = [resume, platform] + (previous if isinstance(previous, list) else [])
+                        for tid in ids:
+                            if isinstance(tid, str) and tid and tid != '{}':
+                                titles[tid] = label
+            except sqlite3.Error:
+                pass  # Kepler is optional; retain Codex names if unavailable.
+        self.titles = {tid: title[:140] + '…' if len(title) > 140 else title for tid, title in titles.items()}
 
     def snapshot(self, day):
         with self.lock:
